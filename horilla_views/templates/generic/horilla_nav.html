@@ -21,8 +21,10 @@
     hx-get="{{search_url}}?&referrer={{request.META.HTTP_REFERER}}&{{request.GET.urlencode}}"
     hx-replace-url="false"
     hx-target="{{search_swap_target}}"
+    hx-on:submit="htmxLoadIndicator(this);"
     class="oh-main__titlebar oh-main__titlebar--right"
   >
+    <input type="text" name="nav_url" value="{{request.path}}" hidden>
     <div class="oh-input-group oh-input__search-group" id="searchGroup">
       <ion-icon
         name="search-outline"
@@ -62,7 +64,7 @@
       />
       {% if search_in %}
       <input type="text" hidden name="search_field">
-      <div class="custom-dropdown" id="dropdown">
+      <div class="custom-dropdown" id="dropdown" style="z-index: 1000 !important;">
         <ul class="search_content">
           {% for option in search_in %}
           <li>
@@ -127,7 +129,6 @@
                         filterData[key] = value;
                     }
                 });
-                console.log(filterData)
                 $.ajax({
                   type: 'get',
                   url: `{% url 'last-applied-filter' %}`,
@@ -235,6 +236,9 @@
     var data ={{last_filter|safe}}
     for (const key in data) {
       const field = form.elements[key];
+      if ({{empty_inputs|safe}}.includes(key)) {
+        continue
+      }
       const value = data[key][0];  // Get the first element in the array
 
       if (field) {
@@ -252,9 +256,11 @@
     }
     setTimeout(() => {
       $(".oh-btn--view-active").click();
+      {% if apply_first_filter %}
       if (!$(".oh-btn--view-active").length) {
         $("#applyFilter").click()
       }
+      {% endif %}
     }, 100);
     $(".oh-btn--view").click(function (e) {
       e.preventDefault();

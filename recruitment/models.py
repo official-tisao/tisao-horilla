@@ -18,7 +18,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models.signals import post_save
+from django.db.models.signals import m2m_changed, post_save
 from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
 
@@ -86,6 +86,7 @@ class SurveyTemplate(HorillaModel):
         blank=True,
         verbose_name=_("Company"),
     )
+    objects = HorillaCompanyManager("company_id")
 
     def __str__(self) -> str:
         return self.title
@@ -243,27 +244,6 @@ class Recruitment(HorillaModel):
             hired_candidate = hired_stage.candidate_set.all().exclude(canceled=True)
             if len(hired_candidate) >= self.vacancy:
                 return True
-
-
-@receiver(post_save, sender=Recruitment)
-def create_initial_stage(sender, instance, created, **kwargs):
-    """
-    This is post save method, used to create initial stage for the recruitment
-    """
-    if created:
-        applied_stage = Stage()
-        applied_stage.sequence = 0
-        applied_stage.recruitment_id = instance
-        applied_stage.stage = "Applied"
-        applied_stage.stage_type = "applied"
-        applied_stage.save()
-
-        initial_stage = Stage()
-        initial_stage.sequence = 1
-        initial_stage.recruitment_id = instance
-        initial_stage.stage = "Initial"
-        initial_stage.stage_type = "initial"
-        initial_stage.save()
 
 
 class Stage(HorillaModel):
@@ -424,6 +404,7 @@ class Candidate(HorillaModel):
     start_onboard = models.BooleanField(default=False, verbose_name=_("Start Onboard"))
     hired = models.BooleanField(default=False, verbose_name=_("Hired"))
     canceled = models.BooleanField(default=False, verbose_name=_("Canceled"))
+    converted = models.BooleanField(default=False, verbose_name=_("Converted"))
     joining_date = models.DateField(
         blank=True, null=True, verbose_name=_("Joining Date")
     )
@@ -510,6 +491,9 @@ class Candidate(HorillaModel):
         """ """
         return self.get_email()
 
+    def phone(self):
+        return self.mobile
+
     def tracking(self):
         """
         This method is used to return the tracked history of the instance
@@ -590,6 +574,10 @@ class Candidate(HorillaModel):
         ):
             raise ValidationError(_("Employee is uniques for candidate"))
 
+        if self.converted:
+            self.hired = False
+            self.canceled = False
+
         super().save(*args, **kwargs)
 
     class Meta:
@@ -606,9 +594,6 @@ class Candidate(HorillaModel):
             ("archive_candidate", "Archive Candidate"),
         )
         ordering = ["sequence"]
-
-
-from horilla.signals import pre_bulk_update
 
 
 class RejectReason(HorillaModel):
@@ -678,13 +663,22 @@ class StageNote(HorillaModel):
     description = models.TextField(verbose_name=_("Description"), max_length=255)
     stage_id = models.ForeignKey(Stage, on_delete=models.CASCADE)
     stage_files = models.ManyToManyField(StageFiles, blank=True)
-    updated_by = models.ForeignKey(Employee, on_delete=models.CASCADE)
+    updated_by = models.ForeignKey(
+        Employee, on_delete=models.CASCADE, null=True, blank=True
+    )
+    candidate_can_view = models.BooleanField(default=False)
     objects = HorillaCompanyManager(
         related_company_field="candidate_id__recruitment_id__company_id"
     )
 
     def __str__(self) -> str:
         return f"{self.description}"
+
+    def updated_user(self):
+        if self.updated_by:
+            return self.updated_by
+        else:
+            return self.candidate_id
 
 
 class RecruitmentSurvey(HorillaModel):
@@ -802,21 +796,6 @@ class RecruitmentSurveyAnswer(HorillaModel):
         return f"{self.candidate_id.name}-{self.recruitment_id}"
 
 
-class RecruitmentMailTemplate(HorillaModel):
-    title = models.CharField(max_length=25, unique=True)
-    body = models.TextField()
-    company_id = models.ForeignKey(
-        Company,
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-        verbose_name=_("Company"),
-    )
-
-    def __str__(self) -> str:
-        return f"{self.title}"
-
-
 class SkillZone(HorillaModel):
     """ "
     Model for talent pool
@@ -873,15 +852,24 @@ class SkillZoneCandidate(HorillaModel):
         related_company_field="candidate_id__recruitment_id__company_id"
     )
 
-    class Meta:
-        """
-        Meta class to add the additional info
-        """
-
-        unique_together = (
-            "skill_zone_id",
-            "candidate_id",
+    def clean(self):
+        # Check for duplicate entries in the database
+        duplicate_exists = (
+            SkillZoneCandidate.objects.filter(
+                candidate_id=self.candidate_id, skill_zone_id=self.skill_zone_id
+            )
+            .exclude(pk=self.pk)
+            .exists()
         )
+
+        if duplicate_exists:
+            raise ValidationError(
+                _(
+                    f"Candidate {self.candidate_id} already exists in Skill Zone {self.skill_zone_id}."
+                )
+            )
+
+        super().clean()
 
     def __str__(self) -> str:
         return str(self.candidate_id.get_full_name())
@@ -926,7 +914,7 @@ class InterviewSchedule(HorillaModel):
         related_name="candidate_interview",
         on_delete=models.CASCADE,
     )
-    employee_id = models.ManyToManyField(Employee, verbose_name=_("interviewer"))
+    employee_id = models.ManyToManyField(Employee, verbose_name=_("Interviewer"))
     interview_date = models.DateField(verbose_name=_("Interview Date"))
     interview_time = models.TimeField(verbose_name=_("Interview Time"))
     description = models.TextField(
@@ -935,6 +923,7 @@ class InterviewSchedule(HorillaModel):
     completed = models.BooleanField(
         default=False, verbose_name=_("Is Interview Completed")
     )
+    objects = HorillaCompanyManager("candidate_id__recruitment_id__company_id")
 
     def __str__(self) -> str:
         return f"{self.candidate_id} -Interview."
@@ -954,3 +943,75 @@ class Resume(models.Model):
 
     def __str__(self):
         return f"{self.recruitment_id} - Resume {self.pk}"
+
+
+STATUS = [
+    ("requested", "Requested"),
+    ("approved", "Approved"),
+    ("rejected", "Rejected"),
+]
+
+FORMATS = [
+    ("any", "Any"),
+    ("pdf", "PDF"),
+    ("txt", "TXT"),
+    ("docx", "DOCX"),
+    ("xlsx", "XLSX"),
+    ("jpg", "JPG"),
+    ("png", "PNG"),
+    ("jpeg", "JPEG"),
+]
+
+
+class CandidateDocumentRequest(HorillaModel):
+    title = models.CharField(max_length=100)
+    candidate_id = models.ManyToManyField(Candidate)
+    format = models.CharField(choices=FORMATS, max_length=10)
+    max_size = models.IntegerField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True, max_length=255)
+    objects = HorillaCompanyManager(
+        related_company_field="employee_id__employee_work_info__company_id"
+    )
+
+    def __str__(self):
+        return self.title
+
+
+class CandidateDocument(HorillaModel):
+    title = models.CharField(max_length=250)
+    candidate_id = models.ForeignKey(
+        Candidate, on_delete=models.PROTECT, verbose_name="Candidate"
+    )
+    document_request_id = models.ForeignKey(
+        CandidateDocumentRequest, on_delete=models.PROTECT, null=True
+    )
+    document = models.FileField(upload_to="candidate/documents", null=True)
+    status = models.CharField(choices=STATUS, max_length=10, default="requested")
+    reject_reason = models.TextField(blank=True, null=True, max_length=255)
+
+    def __str__(self):
+        return f"{self.candidate_id} - {self.title}"
+
+    def clean(self, *args, **kwargs):
+        super().clean(*args, **kwargs)
+        file = self.document
+
+        if len(self.title) < 3:
+            raise ValidationError({"title": _("Title must be at least 3 characters")})
+
+        if file and self.document_request_id:
+            format = self.document_request_id.format
+            max_size = self.document_request_id.max_size
+            if max_size:
+                if file.size > max_size * 1024 * 1024:
+                    raise ValidationError(
+                        {"document": _("File size exceeds the limit")}
+                    )
+
+            ext = file.name.split(".")[1].lower()
+            if format == "any":
+                pass
+            elif ext != format:
+                raise ValidationError(
+                    {"document": _("Please upload {} file only.").format(format)}
+                )

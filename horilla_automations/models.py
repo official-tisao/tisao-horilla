@@ -2,7 +2,9 @@ from django.db import models
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _trans
 
+from base.methods import eval_validate
 from base.models import HorillaMailTemplate
+from employee.models import Employee
 from horilla.models import HorillaModel
 from horilla_views.cbv_methods import render_template
 
@@ -35,13 +37,22 @@ class MailAutomation(HorillaModel):
     mail_to = models.TextField(verbose_name="Mail to")
     mail_details = models.CharField(
         max_length=250,
-        help_text="Fill mail template details(reciever/instance, `self` will be the person who trigger the automation)",
+        help_text=_trans(
+            "Fill mail template details(reciever/instance, `self` will be the person who trigger the automation), `As template` option will sent instead of the mail template"
+        ),
     )
     mail_detail_choice = models.TextField(default="", editable=False)
     trigger = models.CharField(max_length=10, choices=choices)
     # udpate the on_update logic to if and only if when
     # changes in the previous and current value
-    mail_template = models.ForeignKey(HorillaMailTemplate, on_delete=models.CASCADE)
+    mail_template = models.ForeignKey(
+        HorillaMailTemplate, on_delete=models.CASCADE, null=True, blank=True
+    )
+    also_sent_to = models.ManyToManyField(
+        Employee,
+        blank=True,
+        verbose_name=_trans("Also Send to"),
+    )
     template_attachments = models.ManyToManyField(
         HorillaMailTemplate,
         related_name="template_attachment",
@@ -73,7 +84,7 @@ class MailAutomation(HorillaModel):
         method that returns the display value for `mail_to`
         field
         """
-        mail_to = eval(self.mail_to)
+        mail_to = eval_validate(self.mail_to)
         mappings = []
         for mapping in mail_to:
             mapping = mapping.split("__")
@@ -86,6 +97,12 @@ class MailAutomation(HorillaModel):
             mappings.append(display)
         return render_template(
             "horilla_automations/mail_to.html", {"instance": self, "mappings": mappings}
+        )
+
+    def get_mail_cc_display(self):
+        employees = self.also_sent_to.all()
+        return render_template(
+            "horilla_automations/mail_cc.html", {"employees": employees}
         )
 
     def detailed_url(self):

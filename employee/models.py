@@ -85,8 +85,8 @@ class Employee(models.Model):
         max_length=15,
     )
     address = models.TextField(max_length=200, blank=True, null=True)
-    country = models.CharField(max_length=30, blank=True, null=True)
-    state = models.CharField(max_length=30, null=True, blank=True)
+    country = models.CharField(max_length=100, blank=True, null=True)
+    state = models.CharField(max_length=100, null=True, blank=True)
     city = models.CharField(max_length=30, null=True, blank=True)
     zip = models.CharField(max_length=20, null=True, blank=True)
     dob = models.DateField(null=True, blank=True)
@@ -139,6 +139,20 @@ class Employee(models.Model):
         """
         return getattr(getattr(self, "employee_work_info", None), "company_id", None)
 
+    def get_date_format(self):
+        company = (
+            self.get_company()
+            if self.get_company()
+            else Company.objects.filter(hq=True).first()
+        )
+
+        if company:
+            date_format = company.date_format
+
+            return date_format if date_format else "MMM. D, YYYY"
+
+        return "MMM. D, YYYY"
+
     def get_job_position(self):
         """
         This method is used to return the job position of the employee
@@ -163,7 +177,9 @@ class Employee(models.Model):
         """
         This method is used to return the shift of the employee
         """
-        return getattr(getattr(self, "employee_work_info", None), "email", self.email)
+        work_info = getattr(self, "employee_work_info", None)
+        work_email = getattr(work_info, "email", None)
+        return work_email if work_email is not None else self.email
 
     def get_email(self):
         return self.get_mail()
@@ -481,17 +497,27 @@ class Employee(models.Model):
             self.is_active = True
             super().save(*args, **kwargs)
         employee = self
-        if prev_employee and prev_employee.email != employee.email:
-            employee.employee_user_id.username = employee.email
-            employee.employee_user_id.save()
 
         if employee.employee_user_id is None:
             # Create user if no corresponding user exists
             username = self.email
             password = self.phone
-            user = User.objects.create_user(
-                username=username, email=username, password=password
+
+            is_new_employee_flag = (
+                not employee.employee_user_id.is_new_employee
+                if employee.employee_user_id
+                else True
             )
+            user = User.objects.create_user(
+                username=username,
+                email=username,
+                password=password,
+                is_new_employee=is_new_employee_flag,
+            )
+            if not user:
+                user = User.objects.create_user(
+                    username=username, email=username, password=password
+                )
             self.employee_user_id = user
             # default permissions
             change_ownprofile = Permission.objects.get(codename="change_ownprofile")
@@ -568,7 +594,7 @@ class EmployeeWorkInformation(models.Model):
     )
     reporting_manager_id = models.ForeignKey(
         Employee,
-        on_delete=models.DO_NOTHING,
+        on_delete=models.PROTECT,
         blank=True,
         null=True,
         related_name="reporting_manager",
@@ -763,7 +789,7 @@ class Policy(HorillaModel):
     attachments = models.ManyToManyField(PolicyMultipleFile, blank=True)
     company_id = models.ManyToManyField(Company, blank=True, verbose_name=_("Company"))
 
-    objects = HorillaCompanyManager()
+    objects = HorillaCompanyManager("company_id")
 
     def delete(self, *args, **kwargs):
         super().delete(*args, **kwargs)
@@ -853,6 +879,10 @@ class Actiontype(HorillaModel):
     def __str__(self) -> str:
         return f"{self.title}"
 
+    class Meta:
+        verbose_name = _("Action Type")
+        verbose_name_plural = _("Action Types")
+
 
 class DisciplinaryAction(HorillaModel):
     """
@@ -875,9 +905,7 @@ class DisciplinaryAction(HorillaModel):
     attachment = models.FileField(
         upload_to="employee/discipline", null=True, blank=True
     )
-    company_id = models.ManyToManyField(Company, blank=True)
-
-    objects = HorillaCompanyManager()
+    objects = HorillaCompanyManager("employee_id__employee_work_info__company_id")
 
     def __str__(self) -> str:
         return f"{self.action}"
@@ -892,8 +920,17 @@ class EmployeeGeneralSetting(HorillaModel):
     """
 
     badge_id_prefix = models.CharField(max_length=5, default="PEP")
-    objects = models.Manager()
     company_id = models.ForeignKey(Company, null=True, on_delete=models.CASCADE)
+    objects = HorillaCompanyManager("company_id")
+
+
+class ProfileEditFeature(HorillaModel):
+    """
+    ProfileEditFeature
+    """
+
+    is_enabled = models.BooleanField(default=False)
+    objects = models.Manager()
 
 
 from accessibility.accessibility import ACCESSBILITY_FEATURE
@@ -901,3 +938,4 @@ from accessibility.accessibility import ACCESSBILITY_FEATURE
 ACCESSBILITY_FEATURE.append(("gender_chart", "Can view Gender Chart"))
 ACCESSBILITY_FEATURE.append(("department_chart", "Can view Department Chart"))
 ACCESSBILITY_FEATURE.append(("employees_chart", "Can view Employees Chart"))
+ACCESSBILITY_FEATURE.append(("birthday_view", "Can view Birthdays"))

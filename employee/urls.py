@@ -23,6 +23,11 @@ urlpatterns = [
     ),
     path("edit-profile", views.self_info_update, name="edit-profile"),
     path(
+        "profile-edit-access/<int:emp_id>/",
+        views.profile_edit_access,
+        name="profile-edit-access",
+    ),
+    path(
         "update-profile-image/<int:obj_id>/",
         views.update_profile_image,
         name="update-profile-image",
@@ -166,6 +171,13 @@ urlpatterns = [
     path("work-info-export", views.work_info_export, name="work-info-export"),
     path("get-birthday", views.get_employees_birthday, name="get-birthday"),
     path("dashboard", views.dashboard, name="dashboard"),
+    path(
+        "total-employees-count",
+        views.total_employees_count,
+        name="total-employees-count",
+    ),
+    path("joining-today-count", views.joining_today_count, name="joining-today-count"),
+    path("joining-week-count", views.joining_week_count, name="joining-week-count"),
     path("dashboard-employee", views.dashboard_employee, name="dashboard-employee"),
     path(
         "dashboard-employee-gender",
@@ -176,11 +188,6 @@ urlpatterns = [
         "dashboard-employee-department",
         views.dashboard_employee_department,
         name="dashboard-employee-department",
-    ),
-    path(
-        "dashboard-employee-count",
-        views.dashboard_employee_tiles,
-        name="dashboard-employee-count",
     ),
     path("employee-widget-filter", views.widget_filter, name="employee-widget-filter"),
     path("note-tab/<int:emp_id>", views.note_tab, name="note-tab"),
@@ -251,6 +258,11 @@ urlpatterns = [
         "get-template/<int:emp_id>/",
         not_in_out_dashboard.get_template,
         name="get-template-employee",
+    ),
+    path(
+        "get-employee-mail-preview",
+        not_in_out_dashboard.get_mail_preview,
+        name="get-employee-mail-preview",
     ),
     path("view-policies/", policies.view_policies, name="view-policies"),
     path("search-policies", policies.search_policies, name="search-policies"),

@@ -110,26 +110,47 @@
 													>
 												{% endif %}
 											</div>
+											{% if perms.base.view_dynamicemailconfiguration and not "outlook_auth"|app_installed %}
 											<div class="oh-input-group">
-												{% if perms.base.view_dynamicemailconfiguration %}
-													<a
-														id="date"
-														href="{% url 'mail-server-conf' %}"
-														class="oh-inner-sidebar__link oh-dropdown__link"
-														>{% trans "Mail Server" %}</a
-													>
-												{% endif %}
+												<a
+													id="date"
+													href="{% url 'mail-server-conf' %}"
+													class="oh-inner-sidebar__link oh-dropdown__link"
+													>{% trans "Mail Server" %}</a
+												>
 											</div>
+											{% else %}
+											<div class="oh-input-group">
+													<a
+													id="date"
+													href="{% url 'outlook_view_records' %}"
+													class="oh-inner-sidebar__link oh-dropdown__link"
+													>{% trans "Outlook Mail" %}</a
+												>
+											</div>
+										{% endif %}
 											<div class="oh-input-group">
 												{% if perms.horilla_backup.view_googledrivebackup %}
 													<a
 														id="date"
-														{% comment %} href="{% url 'gdrive' %}" {% endcomment %}
+														href="{% url 'gdrive' %}"
 														class="oh-inner-sidebar__link oh-dropdown__link"
 														>{% trans "Gdrive Backup" %}</a
 													>
 												{% endif %}
 											</div>
+											{% if "horilla_ldap"|app_installed %}
+												{% if perms.horilla_ldap.add_ldapsettings or perms.horilla_ldap.update_ldapsettings %}
+													<div class="oh-input-group">
+														<a
+															id="date"
+															href="{% url 'ldap-settings' %}"
+															class="oh-inner-sidebar__link oh-dropdown__link"
+															>{% trans "LDAP Configuration" %}</a
+														>
+													</div>
+												{% endif %}
+											{% endif %}
 										</div>
 									</div>
 								</div>
@@ -311,7 +332,7 @@
 												{% endif %}
 											</div>
 											<div class="oh-input-group">
-												{% if perms.base.view_actiontype %}
+												{% if perms.employee.view_actiontype %}
 													<a
 														id="date"
 														href="{% url 'action-type' %}"
@@ -321,7 +342,7 @@
 												{% endif %}
 											</div>
 											<div class="oh-input-group">
-												{% if perms.employee.view_emplyeetag %}
+												{% if perms.employee.view_employeetag %}
 													<a
 														id="ticket_type"
 														href="{% url 'employee-tag-view' %}"
@@ -364,6 +385,16 @@
 														href="{% url 'attendance-settings-view' %}"
 														class="oh-inner-sidebar__link oh-dropdown__link"
 														>{% trans "Attendance Break Point" %}</a
+													>
+												{% endif %}
+											</div>
+											<div class="oh-input-group">
+												{% if perms.attendance.view_attendancevalidationcondition %}
+													<a
+														id="condition"
+														href="{% url 'check-in-check-out-setting' %}"
+														class="oh-inner-sidebar__link oh-dropdown__link"
+														>{% trans "Check In/Check Out" %}</a
 													>
 												{% endif %}
 											</div>

@@ -2,7 +2,7 @@
 {% block content %}
 {% load static %}
 {% load i18n %}
-
+<div id="messages" class="oh-alert-container"></div>
 <div class="oh-modal" id="createModal" role="dialog" aria-hidden="true">
   <div class="oh-modal__dialog" style="max-width: 550px">
       <div class="oh-modal__dialog-header">
@@ -48,6 +48,10 @@
     <span class="m-1" onclick="$('[name=hired]').val('true');$('[name=canceled]').val('unknown'); $('[name=hired]').first().change(); $('.filterButton').click()" style="cursor: pointer;margin-left: 5px;">
       <span class="oh-dot oh-dot--small me-1" style="background-color:yellowgreen"></span>
       {% trans "Hired" %}
+    </span>
+    <span class="m-1" onclick="$('[name=converted]').val('true');$('[name=hired]').val('unknown'); $('[name=converted]').first().change(); $('.filterButton').click()" style="cursor: pointer;margin-left: 5px;">
+      <span class="oh-dot oh-dot--small me-1" style="background-color:blue"></span>
+      {% trans "Converted" %}
     </span>
   </div>
 

@@ -1,4 +1,4 @@
-from django.apps import AppConfig
+from django.apps import AppConfig, apps
 
 
 class LeaveConfig(AppConfig):
@@ -8,8 +8,11 @@ class LeaveConfig(AppConfig):
     def ready(self):
         from django.urls import include, path
 
+        from horilla.horilla_settings import APPS
         from horilla.urls import urlpatterns
+        from leave import signals
 
+        APPS.append("leave")
         urlpatterns.append(
             path("leave/", include("leave.urls")),
         )

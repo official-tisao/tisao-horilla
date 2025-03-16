@@ -6,6 +6,7 @@ horilla_automation/signals.py
 import copy
 import logging
 import threading
+import time
 import types
 
 from django import template
@@ -40,12 +41,22 @@ def start_automation():
     """
     Automation signals
     """
+    from base.models import HorillaMailTemplate
     from horilla_automations.methods.methods import get_model_class, split_query_string
     from horilla_automations.models import MailAutomation
 
     @receiver(post_delete, sender=MailAutomation)
     @receiver(post_save, sender=MailAutomation)
-    def automation_pre_create(sender, instance, **kwargs):
+    def automation_signal(sender, instance, **kwargs):
+        """
+        signal method to handle automation post save
+        """
+        start_connection()
+        track_previous_instance()
+
+    @receiver(post_delete, sender=HorillaMailTemplate)
+    @receiver(post_save, sender=HorillaMailTemplate)
+    def template_signal(sender, instance, **kwargs):
         """
         signal method to handle automation post save
         """
@@ -81,10 +92,10 @@ def start_automation():
                         )
 
             previous_bulk_record = getattr(_thread_locals, "previous_bulk_record", None)
-            previous_queryset = None
+            previous_queryset_copy = []
             if previous_bulk_record:
-                previous_queryset = previous_bulk_record["queryset"]
-                previous_queryset_copy = previous_bulk_record["queryset_copy"]
+                previous_queryset = previous_bulk_record.get("queryset", None)
+                previous_queryset_copy = previous_bulk_record.get("queryset_copy", [])
 
             bulk_thread = threading.Thread(
                 target=_bulk_update_thread_handler,
@@ -333,7 +344,7 @@ def send_mail(request, automation, instance):
     mail sending method
     """
     from base.backends import ConfiguredEmailBackend
-    from base.methods import generate_pdf
+    from base.methods import eval_validate, generate_pdf
     from horilla_automations.methods.methods import (
         get_model_class,
         get_related_field_model,
@@ -341,13 +352,23 @@ def send_mail(request, automation, instance):
     from horilla_views.templatetags.generic_template_filters import getattribute
 
     mail_template = automation.mail_template
-    pk = getattribute(instance, automation.mail_details)
+    if instance.pk:
+        # refreshing instance due to m2m fields are not loading here some times
+        time.sleep(0.1)
+        instance = instance._meta.model.objects.get(pk=instance.pk)
+    pk_or_text = getattribute(instance, automation.mail_details)
     model_class = get_model_class(automation.model)
     model_class = get_related_field_model(model_class, automation.mail_details)
-    mail_to_instance = model_class.objects.filter(pk=pk).first()
+    context_instance = None
+    if isinstance(pk_or_text, int):
+        context_instance = model_class.objects.filter(pk=pk_or_text).first()
+    else:
+        # if text field then the template or body will the text content
+        pass
+
     tos = []
-    for mapping in eval(automation.mail_to):
-        result = getattribute(mail_to_instance, mapping)
+    for mapping in eval_validate(automation.mail_to):
+        result = getattribute(instance, mapping)
         if isinstance(result, list):
             tos = tos + result
             continue
@@ -355,6 +376,19 @@ def send_mail(request, automation, instance):
     tos = list(filter(None, tos))
     to = tos[:1]
     cc = tos[1:]
+    try:
+        also_sent_to = automation.also_sent_to.select_related(
+            "employee_work_info"
+        ).all()
+
+        if also_sent_to.exists():
+            cc.extend(
+                str(employee.get_mail())
+                for employee in also_sent_to
+                if employee.get_mail()
+            )
+    except Exception as e:
+        logger.error(e)
     email_backend = ConfiguredEmailBackend()
     display_email_name = email_backend.dynamic_from_email_with_display_name
     if request:
@@ -365,26 +399,35 @@ def send_mail(request, automation, instance):
         except:
             logger.error(Exception)
 
-    if mail_to_instance and request and tos:
+    if pk_or_text and request and tos:
         attachments = []
         try:
             sender = request.user.employee_get
         except:
             sender = None
-        for template_attachment in automation.template_attachments.all():
-            template_bdy = template.Template(template_attachment.body)
-            context = template.Context({"instance": mail_to_instance, "self": sender})
-            render_bdy = template_bdy.render(context)
-            attachments.append(
-                (
-                    "Document",
-                    generate_pdf(render_bdy, {}, path=False, title="Document").content,
-                    "application/pdf",
+        if context_instance:
+            for template_attachment in automation.template_attachments.all():
+                template_bdy = template.Template(template_attachment.body)
+                context = template.Context(
+                    {"instance": context_instance, "self": sender}
                 )
-            )
+                render_bdy = template_bdy.render(context)
+                attachments.append(
+                    (
+                        "Document",
+                        generate_pdf(
+                            render_bdy, {}, path=False, title="Document"
+                        ).content,
+                        "application/pdf",
+                    )
+                )
 
-        template_bdy = template.Template(mail_template.body)
-        context = template.Context({"instance": mail_to_instance, "self": sender})
+            template_bdy = template.Template(mail_template.body)
+        else:
+            template_bdy = template.Template(pk_or_text)
+        context = template.Context(
+            {"instance": context_instance, "self": sender, "model_instance": instance}
+        )
         render_bdy = template_bdy.render(context)
 
         title_template = template.Template(automation.title)

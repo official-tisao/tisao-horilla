@@ -5,12 +5,12 @@ horilla_views/forms.py
 import os
 
 from django import forms
-from django.contrib import messages
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.template.loader import render_to_string
 from django.utils.safestring import SafeText
-from django.utils.translation import gettext_lazy as _trans
+from django.utils.translation import gettext_lazy as _
 
 from horilla.horilla_middlewares import _thread_locals
 from horilla_views import models
@@ -20,7 +20,6 @@ from horilla_views.cbv_methods import (
     MODEL_FORM_FIELD_MAP,
     get_field_class_map,
     structured,
-    value_to_field,
 )
 from horilla_views.templatetags.generic_template_filters import getattribute
 
@@ -30,7 +29,7 @@ class ToggleColumnForm(forms.Form):
     Toggle column form
     """
 
-    def __init__(self, columns, hidden_fields: list, *args, **kwargs):
+    def __init__(self, columns, default_columns, hidden_fields: list, *args, **kwargs):
         request = getattr(_thread_locals, "request", {})
         self.request = request
         super().__init__(*args, **kwargs)
@@ -38,7 +37,9 @@ class ToggleColumnForm(forms.Form):
             initial = True
             if column[1] in hidden_fields:
                 initial = False
-
+            if not hidden_fields:
+                if column not in default_columns:
+                    initial = False
             self.fields[column[1]] = forms.BooleanField(
                 label=column[0], initial=initial
             )
@@ -97,7 +98,7 @@ class DynamicBulkUpdateForm(forms.Form):
     DynamicBulkUpdateForm
     """
 
-    verbose_name = _trans("Bulk Update")
+    verbose_name = _("Bulk Update")
 
     def __init__(
         self,
@@ -105,7 +106,7 @@ class DynamicBulkUpdateForm(forms.Form):
         root_model: models.models.Model = None,
         bulk_update_fields: list = [],
         ids: list = [],
-        **kwargs
+        **kwargs,
     ):
         self.ids = ids
         self.root_model = root_model
@@ -128,22 +129,32 @@ class DynamicBulkUpdateForm(forms.Form):
                         label=val.verbose_name.capitalize(),
                         required=False,
                     )
+                    self.fields[key].widget.option_template_name = (
+                        "horilla_widgets/select_option.html",
+                    )
                     continue
                 elif not getattribute(val, "related_model"):
                     if isinstance(val, models.models.CharField) and val.choices:
                         self.fields[key] = forms.ChoiceField(
-                            choices=val.choices,
+                            choices=[("", "--------")]
+                            + [choice for choice in val.choices if choice[0] != ""],
                             widget=forms.Select(
                                 attrs={"class": "oh-select oh-select-2 w-100"}
                             ),
                             label=val.verbose_name.capitalize(),
                             required=False,
                         )
+                        self.fields[key].widget.option_template_name = (
+                            "horilla_widgets/select_option.html",
+                        )
                         continue
                     self.fields[key] = field(
                         widget=widget,
                         label=val.verbose_name.capitalize(),
                         required=False,
+                    )
+                    self.fields[key].widget.option_template_name = (
+                        "horilla_widgets/select_option.html",
                     )
                     continue
                 queryset = val.related_model.objects.all()
@@ -153,6 +164,24 @@ class DynamicBulkUpdateForm(forms.Form):
                     label=val.verbose_name,
                     required=False,
                 )
+                self.fields[key].widget.option_template_name = (
+                    "horilla_widgets/select_option.html",
+                )
+
+    def is_valid(self):
+        valid = True
+        try:
+            with transaction.atomic():
+                # Perform bulk update
+                self.save()
+                # Simulate error check
+                raise Exception("no_errors")
+        except Exception as e:
+            # Handle errors or validation issues
+            if not "no_errors" in str(e):
+                valid = False
+                self.add_error(None, f"Form not valid: {str(e)}")
+        return valid
 
     def save(self, *args, **kwargs):
         """
@@ -229,5 +258,3 @@ class DynamicBulkUpdateForm(forms.Form):
                 for field, file in files.items():
                     file_path = os.path.join(field.upload_to, file.name)
                     default_storage.save(file_path, ContentFile(file.read()))
-
-        messages.success(self.request, _trans("Selected Records updated"))

@@ -5,6 +5,7 @@ This module is used to write views related to the survey features
 """
 
 import json
+import os
 from datetime import datetime
 from uuid import uuid4
 
@@ -167,6 +168,9 @@ def candidate_survey(request):
                     {"form": form, "candidate": candidate},
                 )
             attachment_path = f"recruitment_attachment/{attachment.name}"
+            attachment_dir = os.path.dirname(default_storage.path(attachment_path))
+            if not os.path.exists(attachment_dir):
+                os.makedirs(attachment_dir)
             with default_storage.open(attachment_path, "wb+") as destination:
                 for chunk in attachment.chunks():
                     destination.write(chunk)
@@ -195,7 +199,7 @@ def view_question_template(request):
         for manager in i.recruitment_managers.all():
             if request.user.employee_get == manager:
                 ids.append(i.id)
-    if request.user.has_perm("view_recruitmentsurvey"):
+    if request.user.has_perm("recruitment.view_recruitmentsurvey"):
         questions = RecruitmentSurvey.objects.all()
     else:
         questions = RecruitmentSurvey.objects.filter(recruitment_ids__in=ids)
@@ -310,7 +314,7 @@ def create_question_template(request):
 
 
 @login_required
-@permission_required(perm="recriutment.delete_recruitmentsurvey")
+@permission_required(perm="recruitment.delete_recruitmentsurvey")
 def delete_survey_question(request, survey_id):
     """
     This method is used to delete the survey instance
@@ -367,7 +371,9 @@ def application_form(request):
             resume = request.FILES.get("resume")
             if resume:
                 resume_path = f"recruitment/resume/{resume.name}"
-
+                attachment_dir = os.path.dirname(default_storage.path(resume_path))
+                if not os.path.exists(attachment_dir):
+                    os.makedirs(attachment_dir)
                 with default_storage.open(resume_path, "wb+") as destination:
                     for chunk in resume.chunks():
                         destination.write(chunk)
@@ -436,11 +442,18 @@ def single_survey(request, survey_id):
 
 @login_required
 @hx_request_required
-@permission_required("recruitment.add_surveytemplate")
 def create_template(request):
     """
     Create question template views
     """
+    # Check if the user has any of the two permissions
+    if not (
+        request.user.has_perm("recruitment.add_surveytemplate")
+        or request.user.has_perm("recruitment.change_surveytemplate")
+    ):
+        messages.info(request, "You dont have permission.")
+        return HttpResponse("<script>window.location.reload()</script>")
+
     title = request.GET.get("title")
     instance = None
     if title:

@@ -9,16 +9,6 @@ from base.methods import get_pagination
 from base.models import MultipleApprovalManagers
 from employee.models import Employee, EmployeeWorkInformation
 
-
-def paginator_qry(qryset, page_number):
-    """
-    This method is used to paginate queryset
-    """
-    paginator = Paginator(qryset, get_pagination())
-    qryset = paginator.get_page(page_number)
-    return qryset
-
-
 register = template.Library()
 
 
@@ -130,13 +120,13 @@ def abs_value(value):
 def config_perms(user):
     app_permissions = {
         "leave": [
-            "leave.add_holiday",
-            "leave.change_holiday",
-            "leave.add_companyleaves",
-            "leave.change_companyleaves",
             "leave.view_restrictleave",
         ],
         "base": [
+            "base.add_holiday",
+            "base.change_holiday",
+            "base.add_companyleaves",
+            "base.change_companyleaves",
             "base.add_horillamailtemplates",
             "base.view_horillamailtemplates",
         ],
@@ -154,3 +144,12 @@ def config_perms(user):
 def startswith(value, arg):
     """Checks if the value starts with the provided argument."""
     return value.startswith(arg)
+
+
+@register.filter(name="readable")
+def readable(value):
+    try:
+        value = value.replace("_", " ").replace("id", "").title()
+    except:
+        value = value
+    return value

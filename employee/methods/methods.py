@@ -2,10 +2,13 @@
 employee/methods.py
 """
 
-from datetime import date, datetime, timedelta
+import logging
+import threading
+from datetime import datetime
 from itertools import groupby
 
 import pandas as pd
+from django.apps import apps
 from django.contrib.auth.models import User
 from django.db import models
 
@@ -21,6 +24,8 @@ from base.models import (
 )
 from employee.models import Employee, EmployeeWorkInformation
 
+logger = logging.getLogger(__name__)
+
 
 def convert_nan(field, dicts):
     """
@@ -35,6 +40,9 @@ def convert_nan(field, dicts):
 
 
 def dynamic_prefix_sort(item):
+    """
+    Sorts items based on a dynamic prefix length.
+    """
     # Assuming the dynamic prefix length is 3
     prefix = get_initial_prefix(None)["get_initial_prefix"]
 
@@ -88,6 +96,14 @@ def get_ordered_badge_ids():
 
 
 def check_relationship_with_employee_model(model):
+    """
+    Checks the relationship of a given model with the Employee model.
+
+    This function iterates through all the fields of the specified model
+    and identifies fields that are either `ForeignKey` or `ManyToManyField`
+    and are related to the `Employee` model. For each such field, it adds
+    the field name and the type of relationship to a list.
+    """
     related_fields = []
     for field in model._meta.get_fields():
         # Check if the field is a ForeignKey or ManyToManyField and related to Employee
@@ -126,9 +142,10 @@ def bulk_create_user_import(success_lists):
             is_superuser=False,
         )
         user_obj_list.append(user_obj)
-
+    result = []
     if user_obj_list:
-        User.objects.bulk_create(user_obj_list)
+        result = User.objects.bulk_create(user_obj_list)
+    return result
 
 
 def bulk_create_employee_import(success_lists):
@@ -154,7 +171,6 @@ def bulk_create_employee_import(success_lists):
         last_name = convert_nan("Last Name", work_info)
         phone = work_info["Phone"]
         gender = work_info.get("Gender", "").lower()
-
         employee_obj = Employee(
             employee_user_id=user,
             badge_id=badge_id,
@@ -165,14 +181,37 @@ def bulk_create_employee_import(success_lists):
             gender=gender,
         )
         employee_obj_list.append(employee_obj)
-
+    result = []
     if employee_obj_list:
-        Employee.objects.bulk_create(employee_obj_list)
+        result = Employee.objects.bulk_create(employee_obj_list)
 
-    return len(employee_obj_list)
+    return result
+
+
+def set_initial_password(employees):
+    """
+    method to set initial password
+    """
+
+    logger.info("started to set initial password")
+    for employee in employees:
+        try:
+            employee.employee_user_id.set_password(str(employee.phone))
+            employee.employee_user_id.save()
+        except Exception as e:
+            logger.error(f"falied to set initial password for {employee}")
+    logger.info("initial password configured")
 
 
 def optimize_reporting_manager_lookup(success_lists):
+    """
+    Optimizes the lookup of reporting managers from a list of work information.
+
+    This function identifies unique reporting manager names from the provided
+    list of work information, queries all matching `Employee` objects in a
+    single database query, and creates a dictionary for quick lookups based
+    on the full name of the reporting managers.
+    """
     # Step 1: Collect unique reporting manager names
     unique_managers = set()
     for work_info in success_lists:
@@ -358,6 +397,36 @@ def bulk_create_employee_types(success_lists):
         EmployeeType.objects.bulk_create(employee_type_obj_list)
 
 
+def create_contracts_in_thread(new_work_info_list, update_work_info_list):
+    """
+    Creates employee contracts in bulk based on provided work information.
+    """
+    from payroll.models.models import Contract
+
+    def get_or_none(value):
+        return value if value else None
+
+    contracts_list = [
+        Contract(
+            contract_name=f"{work_info.employee_id}'s Contract",
+            employee_id=work_info.employee_id,
+            contract_start_date=(
+                work_info.date_joining if work_info.date_joining else datetime.today()
+            ),
+            department=get_or_none(work_info.department_id),
+            job_position=get_or_none(work_info.job_position_id),
+            job_role=get_or_none(work_info.job_role_id),
+            shift=get_or_none(work_info.shift_id),
+            work_type=get_or_none(work_info.work_type_id),
+            wage=work_info.basic_salary or 0,
+        )
+        for work_info in new_work_info_list + update_work_info_list
+        if work_info.employee_id
+    ]
+
+    Contract.objects.bulk_create(contracts_list)
+
+
 def bulk_create_work_info_import(success_lists):
     """
     Bulk creation of employee work info instances based on the excel import of employees
@@ -541,3 +610,10 @@ def bulk_create_work_info_import(success_lists):
                 "salary_hour",
             ],
         )
+    if apps.is_installed("payroll"):
+
+        contract_creation_thread = threading.Thread(
+            target=create_contracts_in_thread,
+            args=(new_work_info_list, update_work_info_list),
+        )
+        contract_creation_thread.start()

@@ -34,13 +34,14 @@ from django.template.loader import render_to_string
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy as trans
 
-from base.methods import reload_queryset
+from base.methods import eval_validate, reload_queryset
 from employee.models import (
     Actiontype,
     BonusPoint,
     DisciplinaryAction,
     Employee,
     EmployeeBankDetails,
+    EmployeeGeneralSetting,
     EmployeeNote,
     EmployeeTag,
     EmployeeWorkInformation,
@@ -163,6 +164,7 @@ class EmployeeForm(ModelForm):
             "additional_info",
             "is_from_onboarding",
             "is_directly_converted",
+            "is_active",
         )
         widgets = {
             "dob": TextInput(attrs={"type": "date", "id": "dob"}),
@@ -188,6 +190,34 @@ class EmployeeForm(ModelForm):
     def as_p(self, *args, **kwargs):
         context = {"form": self}
         return render_to_string("employee/create_form/personal_info_as_p.html", context)
+
+    def clean(self):
+        super().clean()
+        email = self.cleaned_data["email"]
+        query = Employee.objects.entire().filter(email=email)
+        if self.instance and self.instance.id:
+            query = query.exclude(id=self.instance.id)
+
+        existing_employee = query.first()
+
+        if existing_employee:
+            company_id = None
+            if (
+                hasattr(existing_employee, "employee_work_info")
+                and existing_employee.employee_work_info
+            ):
+                company_id = existing_employee.employee_work_info.company_id
+
+            if company_id:
+                error_message = _(
+                    "An Employee with this Email already exists in company {}".format(
+                        company_id
+                    )
+                )
+            else:
+                error_message = _("An Employee with this Email already exists")
+
+            raise forms.ValidationError({"email": error_message})
 
     def get_next_badge_id(self):
         """
@@ -228,7 +258,7 @@ class EmployeeForm(ModelForm):
                         item = item[total_zero_leads:]
                     if isinstance(item, list):
                         item = item[-1]
-                    if not incremented and isinstance(eval(str(item)), int):
+                    if not incremented and isinstance(eval_validate(str(item)), int):
                         item = int(item) + 1
                         incremented = True
                     if isinstance(item, int):
@@ -246,7 +276,8 @@ class EmployeeForm(ModelForm):
         """
         badge_id = self.cleaned_data["badge_id"]
         if badge_id:
-            queryset = Employee.objects.filter(badge_id=badge_id).exclude(
+            all_employees = Employee.objects.entire()
+            queryset = all_employees.filter(badge_id=badge_id).exclude(
                 pk=self.instance.pk if self.instance else None
             )
             if queryset.exists():
@@ -263,16 +294,32 @@ class EmployeeWorkInformationForm(ModelForm):
     Form for EmployeeWorkInformation model
     """
 
-    employees = Employee.objects.filter(employee_work_info=None)
-    employee_id = forms.ModelChoiceField(queryset=employees)
-
     class Meta:
         """
         Meta class to add the additional info
         """
 
         model = EmployeeWorkInformation
-        fields = "__all__"
+        fields = (
+            "department_id",
+            "job_position_id",
+            "job_role_id",
+            "shift_id",
+            "work_type_id",
+            "employee_type_id",
+            "reporting_manager_id",
+            "company_id",
+            "location",
+            "email",
+            "mobile",
+            "date_joining",
+            "contract_end_date",
+            "tags",
+            "basic_salary",
+            "salary_hour",
+        )
+        exclude = ("employee_id",)
+
         widgets = {
             "date_joining": DateInput(attrs={"type": "date"}),
             "contract_end_date": DateInput(attrs={"type": "date"}),
@@ -341,6 +388,10 @@ class EmployeeWorkInformationForm(ModelForm):
             del self.errors["employee_id"]
         return cleaned_data
 
+    def as_p(self, *args, **kwargs):
+        context = {"form": self}
+        return render_to_string("employee/create_form/personal_info_as_p.html", context)
+
 
 class EmployeeWorkInformationUpdateForm(ModelForm):
     """
@@ -361,6 +412,10 @@ class EmployeeWorkInformationUpdateForm(ModelForm):
             "contract_end_date": DateInput(attrs={"type": "date"}),
         }
 
+    def as_p(self, *args, **kwargs):
+        context = {"form": self}
+        return render_to_string("employee/create_form/personal_info_as_p.html", context)
+
 
 class EmployeeBankDetailsForm(ModelForm):
     """
@@ -375,17 +430,28 @@ class EmployeeBankDetailsForm(ModelForm):
         """
 
         model = EmployeeBankDetails
-        fields = "__all__"
-        exclude = [
-            "employee_id",
-            "is_active",
-        ]
+        fields = (
+            "bank_name",
+            "account_number",
+            "branch",
+            "any_other_code1",
+            "address",
+            "country",
+            "state",
+            "city",
+            "any_other_code2",
+        )
+        exclude = ["employee_id", "is_active", "additional_info"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["address"].widget.attrs["autocomplete"] = "address"
         for visible in self.visible_fields():
             visible.field.widget.attrs["class"] = "oh-input w-100"
+
+    def as_p(self, *args, **kwargs):
+        context = {"form": self}
+        return render_to_string("employee/update_form/bank_info_as_p.html", context)
 
 
 class EmployeeBankDetailsUpdateForm(ModelForm):
@@ -400,10 +466,7 @@ class EmployeeBankDetailsUpdateForm(ModelForm):
 
         model = EmployeeBankDetails
         fields = "__all__"
-        exclude = [
-            "employee_id",
-            "is_active",
-        ]
+        exclude = ["employee_id", "is_active", "additional_info"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -411,6 +474,10 @@ class EmployeeBankDetailsUpdateForm(ModelForm):
             visible.field.widget.attrs["class"] = "oh-input w-100"
         for field in self.fields:
             self.fields[field].widget.attrs["placeholder"] = self.fields[field].label
+
+    def as_p(self, *args, **kwargs):
+        context = {"form": self}
+        return render_to_string("employee/update_form/bank_info_as_p.html", context)
 
 
 excel_columns = [
@@ -624,7 +691,7 @@ class BonusPointRedeemForm(ModelForm):
         available_points = BonusPoint.objects.filter(
             employee_id=self.instance.employee_id
         ).first()
-        if available_points.points < cleaned_data["points"]:
+        if not available_points or available_points.points < cleaned_data["points"]:
             raise forms.ValidationError({"points": "Not enough bonus points to redeem"})
         if cleaned_data["points"] <= 0:
             raise forms.ValidationError(
@@ -636,7 +703,7 @@ class DisciplinaryActionForm(ModelForm):
     class Meta:
         model = DisciplinaryAction
         fields = "__all__"
-        exclude = ["company_id", "objects", "is_active"]
+        exclude = ["objects", "is_active"]
         widgets = {
             "start_date": forms.DateInput(attrs={"type": "date"}),
         }
@@ -700,3 +767,15 @@ class EmployeeTagForm(ModelForm):
         fields = "__all__"
         exclude = ["is_active"]
         widgets = {"color": TextInput(attrs={"type": "color", "style": "height:50px"})}
+
+
+class EmployeeGeneralSettingPrefixForm(forms.ModelForm):
+
+    class Meta:
+
+        model = EmployeeGeneralSetting
+        exclude = ["objects"]
+        widgets = {
+            "badge_id_prefix": forms.TextInput(attrs={"class": "oh-input w-100"}),
+            "company_id": forms.Select(attrs={"class": "oh-select oh-select-2 w-100"}),
+        }

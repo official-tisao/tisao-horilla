@@ -31,7 +31,7 @@ class Period(HorillaModel):
     start_date = models.DateField()
     end_date = models.DateField()
     company_id = models.ManyToManyField(Company, blank=True, verbose_name=_("Company"))
-    objects = HorillaCompanyManager()
+    objects = HorillaCompanyManager("company_id")
 
     def __str__(self):
         return self.period_name
@@ -128,7 +128,7 @@ class Objective(HorillaModel):
         verbose_name=_("Company"),
         on_delete=models.CASCADE,
     )
-    objects = HorillaCompanyManager()
+    objects = HorillaCompanyManager("employee_id__employee_work_info__company_id")
 
     class Meta:
         """
@@ -432,7 +432,7 @@ class QuestionTemplate(HorillaModel):
     )
     company_id = models.ManyToManyField(Company, blank=True, verbose_name=_("Company"))
 
-    objects = HorillaCompanyManager()
+    objects = HorillaCompanyManager("company_id")
 
     def __str__(self):
         return self.question_template
@@ -497,13 +497,16 @@ class Feedback(HorillaModel):
         ("months", _("Months")),
         ("years", _("Years")),
     )
-    review_cycle = models.CharField(max_length=100, null=False, blank=False)
+    review_cycle = models.CharField(
+        max_length=100, null=False, blank=False, verbose_name=_("Title")
+    )
     manager_id = models.ForeignKey(
         Employee,
         related_name="feedback_manager",
         on_delete=models.DO_NOTHING,
         null=True,
         blank=False,
+        verbose_name=_("Manager"),
     )
     employee_id = models.ForeignKey(
         Employee,
@@ -511,12 +514,19 @@ class Feedback(HorillaModel):
         related_name="feedback_employee",
         null=False,
         blank=False,
+        verbose_name=_("Employee"),
     )
     colleague_id = models.ManyToManyField(
-        Employee, related_name="feedback_colleague", blank=True
+        Employee,
+        related_name="feedback_colleague",
+        blank=True,
+        verbose_name=_("Colleague"),
     )
     subordinate_id = models.ManyToManyField(
-        Employee, related_name="feedback_subordinate", blank=True
+        Employee,
+        related_name="feedback_subordinate",
+        blank=True,
+        verbose_name=_("Subordinates"),
     )
     question_template_id = models.ForeignKey(
         QuestionTemplate,
@@ -524,19 +534,23 @@ class Feedback(HorillaModel):
         related_name="feedback_question_template",
         null=False,
         blank=False,
+        verbose_name=_("Question Template"),
     )
     status = models.CharField(
         max_length=50, choices=STATUS_CHOICES, default="Not Started"
     )
     archive = models.BooleanField(null=True, blank=True, default=False)
-    start_date = models.DateField(null=False, blank=False)
-    end_date = models.DateField(null=True, blank=False)
+    start_date = models.DateField(null=False, blank=False, verbose_name=_("Start Date"))
+    end_date = models.DateField(null=True, blank=False, verbose_name=_("End Date"))
     employee_key_results_id = models.ManyToManyField(
-        EmployeeKeyResult,
-        blank=True,
+        EmployeeKeyResult, blank=True, verbose_name=_("Key Result")
     )
-    cyclic_feedback = models.BooleanField(default=False)
-    cyclic_feedback_days_count = models.IntegerField(blank=True, null=True)
+    cyclic_feedback = models.BooleanField(
+        default=False, verbose_name=_("Is Cyclic Feedback")
+    )
+    cyclic_feedback_days_count = models.IntegerField(
+        blank=True, null=True, verbose_name=_("Cycle Period")
+    )
     cyclic_feedback_period = models.CharField(
         max_length=50, choices=PERIOD, blank=True, null=True
     )
@@ -547,6 +561,8 @@ class Feedback(HorillaModel):
 
     class Meta:
         ordering = ["-id"]
+        verbose_name = _("Feedback")
+        verbose_name_plural = _("Feedbacks")
 
     def save(self, *args, **kwargs):
         start_date = self.start_date
@@ -811,6 +827,7 @@ class EmployeeBonusPoint(HorillaModel):
         on_delete=models.CASCADE,
         related_name="employeebonuspoint_set",
     )
+    objects = HorillaCompanyManager("employee_id__employee_work_info__company_id")
 
     def __str__(self):
         return f"{self.employee_id.employee_first_name} - {self.bonus_point}"

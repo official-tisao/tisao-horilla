@@ -27,6 +27,7 @@ from django.forms import DateInput, HiddenInput, TextInput
 from django.template import loader
 from django.template.loader import render_to_string
 from django.utils.encoding import force_bytes
+from django.utils.html import strip_tags
 from django.utils.http import urlsafe_base64_encode
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy as _trans
@@ -196,7 +197,13 @@ class ModelForm(forms.ModelForm):
 
             if isinstance(
                 widget,
-                (forms.NumberInput, forms.EmailInput, forms.TextInput, forms.FileInput),
+                (
+                    forms.NumberInput,
+                    forms.EmailInput,
+                    forms.TextInput,
+                    forms.FileInput,
+                    forms.URLInput,
+                ),
             ):
                 label = ""
                 if field.label is not None:
@@ -243,6 +250,18 @@ class ModelForm(forms.ModelForm):
                 )
             except:
                 pass
+
+    def verbose_name(self):
+        """
+        Returns the verbose name of the model associated with the form.
+        Provides fallback values if no model or verbose name is defined.
+        """
+        if hasattr(self, "_meta") and hasattr(self._meta, "model"):
+            model = self._meta.model
+            if hasattr(model._meta, "verbose_name") and model._meta.verbose_name:
+                return model._meta.verbose_name
+            return model.__name__
+        return ""
 
 
 class Form(forms.Form):
@@ -483,20 +502,21 @@ class JobPositionMultiForm(ModelForm):
     JobPosition model's form
     """
 
-    department_id = HorillaMultiSelectField(queryset=Department.objects.all())
+    department_id = HorillaMultiSelectField(
+        queryset=Department.objects.all(),
+        label=JobPosition._meta.get_field("department_id").verbose_name,
+        widget=forms.SelectMultiple(
+            attrs={
+                "class": "oh-select oh-select2 w-100",
+                "style": "height:45px;",
+            }
+        ),
+    )
 
     class Meta:
         model = JobPosition
         fields = "__all__"
         exclude = ["department_id", "is_active"]
-        widgets = {
-            "department_id": forms.SelectMultiple(
-                attrs={
-                    "class": "oh-select oh-select2 w-100",
-                    "style": "height:45px;",
-                }
-            ),
-        }
 
     def clean(self):
         """
@@ -558,7 +578,8 @@ class JobRoleForm(ModelForm):
         super().__init__(*args, **kwargs)
         if not self.instance.pk:
             self.fields["job_position_id"] = forms.ModelMultipleChoiceField(
-                queryset=self.fields["job_position_id"].queryset
+                queryset=self.fields["job_position_id"].queryset,
+                label=JobRole._meta.get_field("job_position_id").verbose_name,
             )
             attrs = self.fields["job_position_id"].widget.attrs
             attrs["class"] = "oh-select oh-select2 w-100"
@@ -1294,6 +1315,11 @@ class RotatingShiftForm(ModelForm):
                 initial=initial,
             )
 
+        for field in self.fields:
+            if field.startswith("shift"):
+                shift_counts += 1
+                create_shift_field(field, shift_counts <= 2)
+
         for key in self.data.keys():
             if key.startswith("shift") and self.data[key]:
                 shift_counts += 1
@@ -1886,6 +1912,56 @@ class ChangePasswordForm(forms.Form):
         return cleaned_data
 
 
+class ChangeUsernameForm(forms.Form):
+    old_username = forms.CharField(
+        label=_("Old Username"),
+        strip=False,
+        widget=forms.TextInput(
+            attrs={
+                "readonly": "readonly",
+                "class": "oh-input oh-input--text w-100 mb-2",
+            }
+        ),
+    )
+
+    username = forms.CharField(
+        label=_("Username"),
+        strip=False,
+        widget=forms.TextInput(
+            attrs={
+                "placeholder": _("Enter New Username"),
+                "class": "oh-input oh-input--text w-100 mb-2",
+            }
+        ),
+        help_text=_("Enter your username."),
+    )
+
+    password = forms.CharField(
+        label=_("Password"),
+        strip=False,
+        widget=forms.PasswordInput(
+            attrs={
+                "placeholder": _("Enter Password"),
+                "class": "oh-input oh-input--password w-100 mb-2",
+            }
+        ),
+        help_text=_("Enter your password."),
+    )
+
+    def __init__(self, user, *args, **kwargs):
+        self.user = user
+        super(ChangeUsernameForm, self).__init__(*args, **kwargs)
+
+    def clean_password(self):
+        username = self.cleaned_data.get("username")
+        if User.objects.filter(username=username).exists():
+            raise forms.ValidationError("Username already exists.")
+        password = self.cleaned_data.get("password")
+        if not self.user.check_password(password):
+            raise forms.ValidationError("Incorrect password.")
+        return password
+
+
 class ResetPasswordForm(SetPasswordForm):
     """
     ResetPasswordForm
@@ -2171,6 +2247,25 @@ class MailTemplateForm(ModelForm):
         }
         return mail_data
 
+    def get_employee_template_language(self):
+        mail_data = {
+            "Receiver|Full name": "instance.get_full_name",
+            "Sender|Full name": "self.get_full_name",
+            "Receiver|Recruitment": "instance.recruitment_id",
+            "Sender|Recruitment": "self.recruitment_id",
+            "Receiver|Company": "instance.get_company",
+            "Sender|Company": "self.get_company",
+            "Receiver|Job position": "instance.get_job_position",
+            "Sender|Job position": "self.get_job_position",
+            "Receiver|Email": "instance.get_mail",
+            "Sender|Email": "self.get_mail",
+            "Receiver|Employee Type": "instance.get_employee_type",
+            "Sender|Employee Type": "self.get_employee_type",
+            "Receiver|Work Type": "instance.get_work_type",
+            "Sender|Work Type": "self.get_work_type",
+        }
+        return mail_data
+
 
 class MultipleApproveConditionForm(ModelForm):
     CONDITION_CHOICE = [
@@ -2183,8 +2278,9 @@ class MultipleApproveConditionForm(ModelForm):
         ("ge", _("Greater Than or Equal To (>=)")),
         ("icontains", _("Contains")),
     ]
-    multi_approval_manager = forms.ModelChoiceField(
-        queryset=Employee.objects.all(),
+
+    multi_approval_manager = forms.ChoiceField(
+        choices=[],
         widget=forms.Select(attrs={"class": "oh-select oh-select-2 mb-2"}),
         label=_("Approval Manager"),
         required=True,
@@ -2207,6 +2303,13 @@ class MultipleApproveConditionForm(ModelForm):
         exclude = [
             "is_active",
         ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices = [("reporting_manager_id", _("Reporting Manager"))] + [
+            (employee.pk, str(employee)) for employee in Employee.objects.all()
+        ]
+        self.fields["multi_approval_manager"].choices = choices
 
 
 class DynamicPaginationForm(ModelForm):
@@ -2258,10 +2361,19 @@ class AnnouncementForm(ModelForm):
             "expire_date": DateInput(attrs={"type": "date"}),
         }
 
+    def clean_description(self):
+        description = self.cleaned_data.get("description", "").strip()
+        # Remove HTML tags and check if there's meaningful content
+        text_content = strip_tags(description).strip()
+        if not text_content:  # Checks if the field is empty after stripping HTML
+            raise forms.ValidationError("Description is required.")
+        return description
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["attachments"] = MultipleFileField(label="Attachments ")
         self.fields["attachments"].required = False
+        self.fields["description"].required = False
 
     def save(self, commit: bool = ...) -> Any:
         attachement = []
@@ -2623,6 +2735,15 @@ class CompanyLeaveForm(ModelForm):
         model = CompanyLeaves
         fields = "__all__"
         exclude = ["is_active"]
+
+    def __init__(self, *args, **kwargs):
+        """
+        Custom initialization to configure the 'based_on' field.
+        """
+        super().__init__(*args, **kwargs)
+        self.fields["based_on_week"].widget.option_template_name = (
+            "horilla_widgets/select_option.html"
+        )
 
 
 class PenaltyAccountForm(ModelForm):

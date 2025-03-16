@@ -21,7 +21,11 @@ from employee.models import Employee
 from horilla.decorators import login_required, permission_required
 from horilla.group_by import group_by_queryset
 from notifications.signals import notify
-from recruitment.decorators import manager_can_enter, recruitment_manager_can_enter
+from recruitment.decorators import (
+    candidate_login_required,
+    manager_can_enter,
+    recruitment_manager_can_enter,
+)
 from recruitment.filters import StageFilter
 from recruitment.forms import StageCreationForm
 from recruitment.models import Candidate, Recruitment, Stage, StageNote
@@ -123,25 +127,29 @@ def note_delete(request, note_id):
         candidate_id = note.candidate_id.id
         note.delete()
         messages.success(request, _("Note deleted"))
+        script = ""
     except StageNote.DoesNotExist:
         messages.error(request, _("Note not found."))
+        script = "<script>window.location.reload()</script>"
     except ProtectedError:
         messages.error(request, _("You cannot delete this note."))
+        script = f"""
+            <span hx-trigger='load' hx-get='/recruitment/view-note/{candidate_id}/' hx-target='#activitySidebar'></span>
+            """
+    return HttpResponse(script)
 
-    return redirect("view-note", cand_id=candidate_id)
 
-
-@login_required
-@manager_can_enter(perm="recruitment.delete_stagenote")
+@candidate_login_required
+# @manager_can_enter(perm="recruitment.delete_stagenote")
 def note_delete_individual(request, note_id):
     """
     This method is used to delete the stage note
     """
+    script = ""
     note = StageNote.objects.get(id=note_id)
-    candidate_id = note.candidate_id.id
     note.delete()
     messages.success(request, _("Note deleted."))
-    return redirect(f"/recruitment/add-note/{candidate_id}/")
+    return HttpResponse(script)
 
 
 @login_required
@@ -396,6 +404,28 @@ def get_template(request, obj_id=None):
     """
     This method is used to return the mail template
     """
+    body = ""
+    if obj_id:
+        body = HorillaMailTemplate.objects.get(id=obj_id).body
+        template_bdy = template.Template(body)
+    if request.GET.get("word"):
+        word = request.GET.get("word")
+        template_bdy = template.Template("{{" + word + "}}")
+    candidate_id = request.GET.get("candidate_id")
+    if candidate_id:
+        candidate_obj = Candidate.objects.get(id=candidate_id)
+        context = template.Context(
+            {"instance": candidate_obj, "self": request.user.employee_get}
+        )
+        # body = template_bdy.render(context) or " "
+    return JsonResponse({"body": body})
+
+
+@login_required
+def get_template_hint(request, obj_id=None):
+    """
+    This method is used to return the mail template
+    """
     if obj_id:
         body = HorillaMailTemplate.objects.get(id=obj_id).body
         template_bdy = template.Template(body)
@@ -410,3 +440,31 @@ def get_template(request, obj_id=None):
         )
         body = template_bdy.render(context) or " "
     return JsonResponse({"body": body})
+
+
+@login_required
+def get_mail_preview(request):
+    """
+    This method is used to return the mail template preview as an HTTP response.
+    """
+    body = request.POST.get("body")
+    candidate_id = request.GET.get("candidate_id")
+
+    if not body:
+        return HttpResponse("No body provided", status=400)
+
+    template_bdy = template.Template(body)
+    context = {}
+
+    if candidate_id:
+        try:
+            candidate_obj = Candidate.objects.get(id=candidate_id)
+            context = {"instance": candidate_obj, "self": request.user.employee_get}
+        except Candidate.DoesNotExist:
+            return HttpResponse("Candidate not found", status=404)
+
+    rendered_body = template_bdy.render(template.Context(context)) or " "
+
+    textarea_field = f'<div class="oh-input oh-input--textarea" style="border: solid .1px #dbd7d7;">{rendered_body}</div>'
+
+    return HttpResponse(textarea_field, content_type="text/html")
